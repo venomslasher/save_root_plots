@@ -14,6 +14,17 @@
 #include <TError.h>
 #include <fstream>
 #include <iostream>
+#include <csignal>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+
+bool stop = false;
+
+// Signal handler
 
 // Global log file stream
 std::ofstream logFile("log.txt");
@@ -22,7 +33,10 @@ void log(const TString& message) {
     std::cerr << message << std::endl;
     logFile << message << std::endl;
 }
-
+void handle_sigint(int sig) {
+    log("\nCaught Ctrl+C (SIGINT), stopping gracefully...");
+    stop = true;
+}
 // Draw and save any drawable object
 void draw_and_save(TObject* obj, const TString& outpath) {
     TCanvas c("c", "c", 800, 600);
@@ -32,11 +46,13 @@ void draw_and_save(TObject* obj, const TString& outpath) {
 }
 
 // Recursive directory traversal and plot saving
-void traverse_and_save(TDirectory* dir, const TString& out_dir, const TString& rel_path = "") {
+int traverse_and_save(TDirectory* dir, const TString& out_dir, const TString& rel_path = "") {
+    
     TIter nextkey(dir->GetListOfKeys());
     TKey* key;
 
     while ((key = (TKey*)nextkey())) {
+        if (stop) return -1;
         TString name = key->GetName();
         TString className = key->GetClassName();
 
@@ -76,12 +92,13 @@ void traverse_and_save(TDirectory* dir, const TString& out_dir, const TString& r
             log("SKIPPED: Unsupported object: " + full_rel_path + " (" + className + ")");
         }
     }
+    return 0;
 }
 
 // Entry point function
 void save_all_plots(const char* rootfile, const char* outdir) {
-    gROOT->SetBatch(kTRUE); // Disable GUI windows
-
+    std::signal(SIGINT, handle_sigint);
+    gROOT->SetBatch(kTRUE); // Disable GUI window
     TFile* file = TFile::Open(rootfile);
     if (!file || file->IsZombie()) {
         log("FATAL: Cannot open ROOT file: " + TString(rootfile));
@@ -89,10 +106,12 @@ void save_all_plots(const char* rootfile, const char* outdir) {
     }
 
     log("INFO: Processing file: " + TString(rootfile));
-    traverse_and_save(file, TString(outdir));
+    int suc_code = traverse_and_save(file, TString(outdir));
+    
     file->Close();
-
-    log("INFO: All done. Output saved to: " + TString(outdir));
+    if (suc_code == -1){log("Warning: Interrupted. Output saved to: " + TString(outdir));}
+    else {
+    log("INFO: All done. Output saved to: " + TString(outdir));}
     logFile.close();
 }
 
